@@ -1,0 +1,7 @@
+[[overrides]]
+match_type = "artist_album"
+artist = "Example Artist"
+album = "Example Album"
+taxonomy_node_id = "death-metal"
+notes = "Manual correction example."
+

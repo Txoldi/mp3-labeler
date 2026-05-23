@@ -1,0 +1,63 @@
+[[nodes]]
+id = "metal"
+name = "Metal"
+folder_path = "Metal"
+positive_tags = ["metal"]
+broad_tags = ["metal"]
+auto_accept_threshold = 0.85
+
+[[nodes]]
+id = "black-metal"
+name = "Black Metal"
+parent_id = "metal"
+folder_path = "Metal/Black Metal"
+positive_tags = ["black metal"]
+required_tags = ["black metal"]
+auto_accept_threshold = 0.9
+
+[[nodes]]
+id = "melodic-black-metal"
+name = "Melodic Black Metal"
+parent_id = "black-metal"
+folder_path = "Metal/Black Metal/Melodic Black Metal"
+positive_tags = ["melodic black metal"]
+required_tags = ["black metal"]
+auto_accept_threshold = 0.92
+
+[[nodes]]
+id = "dissonant-black-metal"
+name = "Dissonant Black Metal"
+parent_id = "black-metal"
+folder_path = "Metal/Black Metal/Dissonant Black Metal"
+positive_tags = ["dissonant black metal", "avant-garde black metal"]
+required_tags = ["black metal"]
+auto_accept_threshold = 0.92
+
+[[nodes]]
+id = "symphonic-black-metal"
+name = "Symphonic Black Metal"
+parent_id = "black-metal"
+folder_path = "Metal/Black Metal/Symphonic Black Metal"
+positive_tags = ["symphonic black metal"]
+required_tags = ["black metal"]
+auto_accept_threshold = 0.92
+
+[[nodes]]
+id = "orchestral-black-metal"
+name = "Orchestral Black Metal"
+parent_id = "symphonic-black-metal"
+folder_path = "Metal/Black Metal/Symphonic Black Metal/Orchestral Black Metal"
+positive_tags = ["orchestral black metal", "orchestral"]
+required_tags = ["black metal", "symphonic black metal"]
+auto_accept_threshold = 0.94
+
+[[nodes]]
+id = "death-metal"
+name = "Death Metal"
+parent_id = "metal"
+folder_path = "Metal/Death Metal"
+positive_tags = ["death metal", "old school death metal", "brutal death metal"]
+required_tags = ["death metal"]
+negative_tags = ["metalcore", "deathcore"]
+auto_accept_threshold = 0.9
+

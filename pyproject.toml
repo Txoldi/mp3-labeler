@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mp3-labeler"
+version = "0.1.0"
+description = "Organize music albums into a user-controlled genre taxonomy."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [
+  { name = "mp3-labeler contributors" }
+]
+dependencies = [
+  "mutagen>=1.47",
+  "pylast>=5.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+mp3-labeler = "mp3_labeler.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mp3_labeler"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
