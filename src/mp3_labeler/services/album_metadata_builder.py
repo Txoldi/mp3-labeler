@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 from mp3_labeler.domain.models import AlbumMetadata, ExistingGenreEvidence, TrackMetadata
+from mp3_labeler.domain.taxonomy import Taxonomy
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,7 +14,7 @@ class AlbumMetadataBuildResult:
 
 
 class AlbumMetadataBuilder:
-    def build(self, tracks: tuple[TrackMetadata, ...]) -> AlbumMetadataBuildResult:
+    def build(self, tracks: tuple[TrackMetadata, ...], taxonomy: Taxonomy | None = None) -> AlbumMetadataBuildResult:
         if not tracks:
             raise ValueError("Cannot build album metadata without tracks")
 
@@ -34,10 +35,12 @@ class AlbumMetadataBuilder:
 
         return AlbumMetadataBuildResult(
             album_metadata=album_metadata,
-            existing_genre_evidence=self.derive_existing_genre_evidence(tracks),
+            existing_genre_evidence=self.derive_existing_genre_evidence(tracks, taxonomy),
         )
 
-    def derive_existing_genre_evidence(self, tracks: tuple[TrackMetadata, ...]) -> ExistingGenreEvidence:
+    def derive_existing_genre_evidence(
+        self, tracks: tuple[TrackMetadata, ...], taxonomy: Taxonomy | None = None
+    ) -> ExistingGenreEvidence:
         raw_values = tuple(
             genre.strip()
             for track in tracks
@@ -45,7 +48,7 @@ class AlbumMetadataBuilder:
             for genre in track.existing_genre.split(";")
             if genre.strip()
         )
-        normalized_values = tuple(dict.fromkeys(self._normalize_genre(value) for value in raw_values))
+        normalized_values = tuple(dict.fromkeys(Taxonomy.normalize_label(value) for value in raw_values))
 
         if not raw_values:
             return ExistingGenreEvidence(
@@ -58,7 +61,7 @@ class AlbumMetadataBuilder:
 
         per_track_normalized = tuple(
             tuple(
-                self._normalize_genre(genre)
+                Taxonomy.normalize_label(genre)
                 for genre in track.existing_genre.split(";")
                 if genre.strip()
             )
@@ -68,10 +71,22 @@ class AlbumMetadataBuilder:
         genre_counts = Counter(genre for genres in per_track_normalized for genre in set(genres))
         most_common_count = genre_counts.most_common(1)[0][1]
 
+        matched_node_ids = (
+            ()
+            if taxonomy is None
+            else tuple(
+                dict.fromkeys(
+                    node_id
+                    for value in normalized_values
+                    for node_id in taxonomy.match_genre_node_ids(value)
+                )
+            )
+        )
+
         return ExistingGenreEvidence(
             raw_values=tuple(dict.fromkeys(raw_values)),
             normalized_values=normalized_values,
-            matched_taxonomy_node_ids=tuple(self._genre_to_taxonomy_id(value) for value in normalized_values),
+            matched_taxonomy_node_ids=matched_node_ids,
             consistency_ratio=most_common_count / len(per_track_normalized),
             source_tracks_count=len(per_track_normalized),
         )
@@ -112,14 +127,5 @@ class AlbumMetadataBuilder:
             return 0.0
 
         return Counter(values).most_common(1)[0][1] / len(values)
-
-    @staticmethod
-    def _normalize_genre(value: str) -> str:
-        return " ".join(value.casefold().replace("_", " ").replace("-", " ").split())
-
-    @classmethod
-    def _genre_to_taxonomy_id(cls, value: str) -> str:
-        return cls._normalize_genre(value).replace(" ", "-")
-
 
 __all__ = ["AlbumMetadataBuilder", "AlbumMetadataBuildResult"]

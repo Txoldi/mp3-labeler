@@ -35,6 +35,7 @@ class TaxonomyLoader:
 
         nodes = tuple(self._parse_node(value, index) for index, value in enumerate(node_values, start=1))
         self._validate_ids_and_paths(nodes)
+        self._validate_genre_match_labels(nodes)
         self._validate_parent_relationships(nodes)
         return Taxonomy(nodes=nodes)
 
@@ -116,6 +117,19 @@ class TaxonomyLoader:
                 raise TaxonomyValidationError(f"Duplicate taxonomy folder_path: '{node.folder_path}'")
             ids.add(node.id)
             paths.add(node.folder_path.casefold())
+
+    @staticmethod
+    def _validate_genre_match_labels(nodes: tuple[TaxonomyNode, ...]) -> None:
+        owners: dict[str, str] = {}
+        for node in nodes:
+            for label in (node.name, *node.aliases):
+                normalized_label = Taxonomy.normalize_label(label)
+                existing_owner = owners.get(normalized_label)
+                if existing_owner is not None and existing_owner != node.id:
+                    raise TaxonomyValidationError(
+                        f"Genre label '{label}' is ambiguous between nodes '{existing_owner}' and '{node.id}'"
+                    )
+                owners[normalized_label] = node.id
 
     def _validate_parent_relationships(self, nodes: tuple[TaxonomyNode, ...]) -> None:
         by_id = {node.id: node for node in nodes}

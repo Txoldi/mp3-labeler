@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from mp3_labeler.domain.models import TrackMetadata
+from mp3_labeler.domain.taxonomy import Taxonomy, TaxonomyNode
 from mp3_labeler.services.album_metadata_builder import AlbumMetadataBuilder
 
 
@@ -24,6 +25,21 @@ def track(
         album=album,
         year=year,
         existing_genre=genre,
+    )
+
+
+def taxonomy() -> Taxonomy:
+    return Taxonomy(
+        nodes=(
+            TaxonomyNode(id="death-metal", name="Death Metal", folder_path="Metal/Death Metal"),
+            TaxonomyNode(id="black-metal", name="Black Metal", folder_path="Metal/Black Metal"),
+            TaxonomyNode(
+                id="symphonic-black-metal",
+                name="Symphonic Black Metal",
+                folder_path="Metal/Black Metal/Symphonic Black Metal",
+                aliases=("Orchestral Black Metal",),
+            ),
+        )
     )
 
 
@@ -84,7 +100,7 @@ def test_derive_existing_genre_evidence_normalizes_deduplicates_and_maps_taxonom
         track("03.mp3", genre="Death_Metal"),
     )
 
-    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks)
+    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks, taxonomy())
 
     assert evidence.raw_values == ("Death Metal", "death-metal", "Death_Metal")
     assert evidence.normalized_values == ("death metal",)
@@ -99,13 +115,40 @@ def test_derive_existing_genre_evidence_splits_semicolon_separated_values() -> N
         track("02.mp3", genre="Black Metal"),
     )
 
-    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks)
+    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks, taxonomy())
 
     assert evidence.raw_values == ("Black Metal", "Symphonic Black Metal")
     assert evidence.normalized_values == ("black metal", "symphonic black metal")
     assert evidence.matched_taxonomy_node_ids == ("black-metal", "symphonic-black-metal")
     assert evidence.consistency_ratio == pytest.approx(1.0)
     assert evidence.source_tracks_count == 2
+
+
+def test_derive_existing_genre_evidence_matches_configured_aliases() -> None:
+    tracks = (track("01.mp3", genre="orchestral-black-metal"),)
+
+    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks, taxonomy())
+
+    assert evidence.normalized_values == ("orchestral black metal",)
+    assert evidence.matched_taxonomy_node_ids == ("symphonic-black-metal",)
+
+
+def test_derive_existing_genre_evidence_does_not_invent_taxonomy_ids() -> None:
+    tracks = (track("01.mp3", genre="Atmospheric Death Doom"),)
+
+    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks, taxonomy())
+
+    assert evidence.normalized_values == ("atmospheric death doom",)
+    assert evidence.matched_taxonomy_node_ids == ()
+
+
+def test_derive_existing_genre_evidence_requires_taxonomy_to_map_nodes() -> None:
+    tracks = (track("01.mp3", genre="Death Metal"),)
+
+    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks)
+
+    assert evidence.normalized_values == ("death metal",)
+    assert evidence.matched_taxonomy_node_ids == ()
 
 
 def test_derive_existing_genre_evidence_reports_partial_consistency() -> None:
@@ -116,7 +159,7 @@ def test_derive_existing_genre_evidence_reports_partial_consistency() -> None:
         track("04.mp3"),
     )
 
-    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks)
+    evidence = AlbumMetadataBuilder().derive_existing_genre_evidence(tracks, taxonomy())
 
     assert evidence.normalized_values == ("death metal", "black metal")
     assert evidence.consistency_ratio == pytest.approx(2 / 3)

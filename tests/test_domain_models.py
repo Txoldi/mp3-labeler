@@ -184,6 +184,20 @@ def test_taxonomy_builds_lookup_by_node_id() -> None:
     }
 
 
+def test_taxonomy_matches_normalized_genre_names_and_aliases() -> None:
+    symphonic = TaxonomyNode(
+        id="symphonic-black-metal",
+        name="Symphonic Black Metal",
+        folder_path="Metal/Black Metal/Symphonic Black Metal",
+        aliases=("Orchestral Black Metal",),
+    )
+    taxonomy = Taxonomy(nodes=(symphonic,))
+
+    assert taxonomy.match_genre_node_ids("symphonic_black-metal") == ("symphonic-black-metal",)
+    assert taxonomy.match_genre_node_ids("orchestral-black-metal") == ("symphonic-black-metal",)
+    assert taxonomy.match_genre_node_ids("Atmospheric Black Metal") == ()
+
+
 def test_taxonomy_scoring_models_capture_evidence_conflicts_and_review_state() -> None:
     evidence = ScoreEvidence(source="lastfm_album", description="matched death metal", weight=1.0)
     winner = TaxonomyScore(

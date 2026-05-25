@@ -95,6 +95,12 @@ def test_load_accepts_example_taxonomy_configuration() -> None:
             "auto_accept_threshold = 1.5\n",
             "between 0.0 and 1.0",
         ),
+        (
+            '[[nodes]]\nid = "death-metal"\nname = "Death Metal"\nfolder_path = "Death Metal"\n'
+            '[[nodes]]\nid = "osdm"\nname = "Old School Death Metal"\nfolder_path = "Old School Death Metal"\n'
+            'aliases = ["death-metal"]\n',
+            "ambiguous",
+        ),
     ],
 )
 def test_load_rejects_invalid_taxonomy_configuration(tmp_path, contents: str, message: str) -> None:
