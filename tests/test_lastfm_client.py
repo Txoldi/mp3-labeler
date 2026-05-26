@@ -5,6 +5,7 @@ from collections import namedtuple
 import pylast
 import pytest
 
+from mp3_labeler.domain.models import LastFmLookupStatus
 from mp3_labeler.infrastructure.lastfm_client import LastFmApiError, LastFmClient, LastFmConnectionError
 
 
@@ -70,6 +71,18 @@ def test_get_album_tags_translates_weighted_pylast_tags() -> None:
     assert tags[0].weight == pytest.approx(100.0)
     assert tags[0].source == "album"
     assert album.received_limit == 25
+
+
+def test_lookup_album_distinguishes_successful_empty_tags_from_missing_album() -> None:
+    empty_result = LastFmClient("key", network=FakeNetwork(album=FakeAlbum())).lookup_album("Artist", "Album")
+    missing = pylast.WSError(None, pylast.STATUS_INVALID_RESOURCE, "not found")
+    missing_result = LastFmClient("key", network=FakeNetwork(album=FakeAlbum(error=missing))).lookup_album(
+        "Artist", "Missing"
+    )
+
+    assert empty_result.status is LastFmLookupStatus.FOUND
+    assert empty_result.tags == ()
+    assert missing_result.status is LastFmLookupStatus.NOT_FOUND
 
 
 def test_get_artist_candidate_includes_remote_identity_and_tags() -> None:

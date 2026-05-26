@@ -1,0 +1,42 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Inspect real inbox",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "module": "mp3_labeler.cli.main",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "inspect",
+        "--inbox",
+        "C:\\Users\\gorka\\Documents\\TestInbox",
+        "--taxonomy",
+        "${workspaceFolder}\\config\\taxonomy.example.toml",
+        "--lastfm"
+      ],
+      "console": "integratedTerminal",
+      "env": {
+        "LASTFM_API_KEY": "6489ec403f1e01822a1b3361deed66df",
+        "LASTFM_API_SECRET": "${env:LASTFM_API_SECRET}"
+      }
+    },
+    {
+      "name": "Inspect real inbox (local only)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "module": "mp3_labeler.cli.main",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "inspect",
+        "--inbox",
+        "C:\\Users\\gorka\\Documents\\TestInbox",
+        "--taxonomy",
+        "${workspaceFolder}\\config\\taxonomy.example.toml"
+      ],
+      "console": "integratedTerminal"
+    }
+  ]
+}

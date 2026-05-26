@@ -51,6 +51,19 @@ class LastFmTag:
     source: str
 
 
+class LastFmLookupStatus(str, Enum):
+    FOUND = "found"
+    NOT_FOUND = "not_found"
+
+
+@dataclass(frozen=True, slots=True)
+class LastFmAlbumLookupResult:
+    artist_query: str
+    album_query: str
+    status: LastFmLookupStatus
+    tags: tuple[LastFmTag, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ArtistCandidate:
     name: str
@@ -61,6 +74,13 @@ class ArtistCandidate:
     tags: tuple[LastFmTag, ...] = ()
     similar_artists: tuple[str, ...] = ()
     confidence: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class LastFmArtistLookupResult:
+    artist_query: str
+    status: LastFmLookupStatus
+    candidate: ArtistCandidate | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
-from mp3_labeler.domain.models import AlbumMetadata, ArtistCandidate, LastFmTag
+from mp3_labeler.domain.models import (
+    AlbumMetadata,
+    ArtistCandidate,
+    LastFmAlbumLookupResult,
+    LastFmArtistLookupResult,
+    LastFmLookupStatus,
+    LastFmTag,
+)
+from mp3_labeler.infrastructure.repositories import CachedAlbumLookup, CachedArtistLookup
 
 
 class InsufficientMetadataError(ValueError):
@@ -10,31 +20,86 @@ class InsufficientMetadataError(ValueError):
 
 
 class LastFmClientProtocol(Protocol):
-    def get_album_tags(self, artist: str, album: str) -> tuple[LastFmTag, ...]: ...
+    def lookup_album(self, artist: str, album: str) -> LastFmAlbumLookupResult: ...
 
-    def get_artist_candidate(self, artist_name: str) -> ArtistCandidate | None: ...
+    def lookup_artist(self, artist_name: str) -> LastFmArtistLookupResult: ...
+
+
+class LastFmCacheProtocol(Protocol):
+    def get_album(
+        self, artist_query: str, album_query: str, *, at: datetime | None = None
+    ) -> CachedAlbumLookup | None: ...
+
+    def save_album(self, result: LastFmAlbumLookupResult, *, fetched_at: datetime, expires_at: datetime) -> None: ...
+
+    def get_artist(self, artist_query: str, *, at: datetime | None = None) -> CachedArtistLookup | None: ...
+
+    def save_artist(
+        self, result: LastFmArtistLookupResult, *, fetched_at: datetime, expires_at: datetime
+    ) -> None: ...
 
 
 class LastFmLookup:
-    def __init__(self, client: LastFmClientProtocol) -> None:
+    def __init__(
+        self,
+        client: LastFmClientProtocol,
+        *,
+        cache: LastFmCacheProtocol | None = None,
+        clock: Callable[[], datetime] | None = None,
+        success_ttl: timedelta = timedelta(days=30),
+        not_found_ttl: timedelta = timedelta(days=7),
+    ) -> None:
         self.client = client
+        self.cache = cache
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.success_ttl = success_ttl
+        self.not_found_ttl = not_found_ttl
 
-    def find_artist_candidates(self, metadata: AlbumMetadata) -> tuple[ArtistCandidate, ...]:
+    def find_artist_candidates(
+        self, metadata: AlbumMetadata, *, refresh: bool = False
+    ) -> tuple[ArtistCandidate, ...]:
         artist = self._required_artist(metadata)
-        candidate = self.client.get_artist_candidate(artist)
-        return () if candidate is None else (candidate,)
+        result = self._lookup_artist(artist, refresh=refresh)
+        return () if result.candidate is None else (result.candidate,)
 
-    def get_album_tags(self, metadata: AlbumMetadata) -> tuple[LastFmTag, ...]:
+    def get_album_tags(self, metadata: AlbumMetadata, *, refresh: bool = False) -> tuple[LastFmTag, ...]:
         artist = self._required_artist(metadata)
         album = self._required_album(metadata)
-        return self.client.get_album_tags(artist, album)
+        return self._lookup_album(artist, album, refresh=refresh).tags
 
-    def get_artist_tags(self, metadata: AlbumMetadata) -> tuple[LastFmTag, ...]:
-        candidates = self.find_artist_candidates(metadata)
+    def get_artist_tags(self, metadata: AlbumMetadata, *, refresh: bool = False) -> tuple[LastFmTag, ...]:
+        candidates = self.find_artist_candidates(metadata, refresh=refresh)
         return () if not candidates else candidates[0].tags
 
-    def get_tags(self, metadata: AlbumMetadata) -> tuple[LastFmTag, ...]:
-        return self.get_album_tags(metadata) + self.get_artist_tags(metadata)
+    def get_tags(self, metadata: AlbumMetadata, *, refresh: bool = False) -> tuple[LastFmTag, ...]:
+        return self.get_album_tags(metadata, refresh=refresh) + self.get_artist_tags(metadata, refresh=refresh)
+
+    def _lookup_album(self, artist: str, album: str, *, refresh: bool) -> LastFmAlbumLookupResult:
+        now = self.clock()
+        if self.cache is not None and not refresh:
+            cached = self.cache.get_album(artist, album, at=now)
+            if cached is not None:
+                return cached.result
+
+        result = self.client.lookup_album(artist, album)
+        if self.cache is not None:
+            self.cache.save_album(result, fetched_at=now, expires_at=now + self._ttl_for(result.status))
+        return result
+
+    def _lookup_artist(self, artist: str, *, refresh: bool) -> LastFmArtistLookupResult:
+        now = self.clock()
+        if self.cache is not None and not refresh:
+            cached = self.cache.get_artist(artist, at=now)
+            if cached is not None:
+                return cached.result
+
+        result = self.client.lookup_artist(artist)
+        if self.cache is not None:
+            self.cache.save_artist(result, fetched_at=now, expires_at=now + self._ttl_for(result.status))
+        return result
+
+    def _ttl_for(self, status: LastFmLookupStatus) -> timedelta:
+        return self.success_ttl if status is LastFmLookupStatus.FOUND else self.not_found_ttl
 
     @staticmethod
     def _required_artist(metadata: AlbumMetadata) -> str:

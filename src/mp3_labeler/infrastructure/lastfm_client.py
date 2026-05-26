@@ -4,7 +4,13 @@ from typing import Any
 
 import pylast
 
-from mp3_labeler.domain.models import ArtistCandidate, LastFmTag
+from mp3_labeler.domain.models import (
+    ArtistCandidate,
+    LastFmAlbumLookupResult,
+    LastFmArtistLookupResult,
+    LastFmLookupStatus,
+    LastFmTag,
+)
 
 
 class LastFmClientError(RuntimeError):
@@ -36,34 +42,56 @@ class LastFmClient:
         self.network = network or pylast.LastFMNetwork(api_key=api_key, api_secret=api_secret or "")
         self.tag_limit = tag_limit
 
-    def get_album_tags(self, artist: str, album: str) -> tuple[LastFmTag, ...]:
+    def lookup_album(self, artist: str, album: str) -> LastFmAlbumLookupResult:
         try:
             lastfm_album = self.network.get_album(artist, album)
-            return self._tags_from_item(lastfm_album, source="album")
+            return LastFmAlbumLookupResult(
+                artist_query=artist,
+                album_query=album,
+                status=LastFmLookupStatus.FOUND,
+                tags=self._tags_from_item(lastfm_album, source="album"),
+            )
         except pylast.WSError as error:
             if self._is_not_found(error):
-                return ()
+                return LastFmAlbumLookupResult(
+                    artist_query=artist,
+                    album_query=album,
+                    status=LastFmLookupStatus.NOT_FOUND,
+                )
             raise LastFmApiError(f"Last.fm album tag lookup failed for '{artist} - {album}': {error}") from error
         except pylast.NetworkError as error:
             raise LastFmConnectionError(f"Could not connect to Last.fm for album '{artist} - {album}'") from error
 
-    def get_artist_candidate(self, artist_name: str) -> ArtistCandidate | None:
+    def get_album_tags(self, artist: str, album: str) -> tuple[LastFmTag, ...]:
+        return self.lookup_album(artist, album).tags
+
+    def lookup_artist(self, artist_name: str) -> LastFmArtistLookupResult:
         try:
             artist = self.network.get_artist(artist_name)
             tags = self._tags_from_item(artist, source="artist")
             mbid = artist.get_mbid() or None
-            return ArtistCandidate(
-                name=artist.get_name() or artist_name,
-                url=artist.get_url() or None,
-                mbid=mbid,
-                tags=tags,
+            return LastFmArtistLookupResult(
+                artist_query=artist_name,
+                status=LastFmLookupStatus.FOUND,
+                candidate=ArtistCandidate(
+                    name=artist.get_name() or artist_name,
+                    url=artist.get_url() or None,
+                    mbid=mbid,
+                    tags=tags,
+                ),
             )
         except pylast.WSError as error:
             if self._is_not_found(error):
-                return None
+                return LastFmArtistLookupResult(
+                    artist_query=artist_name,
+                    status=LastFmLookupStatus.NOT_FOUND,
+                )
             raise LastFmApiError(f"Last.fm artist lookup failed for '{artist_name}': {error}") from error
         except pylast.NetworkError as error:
             raise LastFmConnectionError(f"Could not connect to Last.fm for artist '{artist_name}'") from error
+
+    def get_artist_candidate(self, artist_name: str) -> ArtistCandidate | None:
+        return self.lookup_artist(artist_name).candidate
 
     def _tags_from_item(self, item: Any, *, source: str) -> tuple[LastFmTag, ...]:
         top_tags = item.get_top_tags(limit=self.tag_limit)

@@ -14,6 +14,9 @@ from mp3_labeler.domain.models import (
     DecisionAction,
     ExistingGenreEvidence,
     LastFmTag,
+    LastFmAlbumLookupResult,
+    LastFmArtistLookupResult,
+    LastFmLookupStatus,
     ManualOverride,
     TrackMetadata,
 )
@@ -103,6 +106,15 @@ def test_artist_candidate_can_hold_lastfm_evidence() -> None:
     assert candidate.tags == (tag,)
     assert candidate.similar_artists == ("Similar Artist",)
     assert candidate.confidence == pytest.approx(0.91)
+
+
+def test_lastfm_lookup_result_models_distinguish_not_found_from_empty_evidence() -> None:
+    empty_album = LastFmAlbumLookupResult("Artist", "Album", LastFmLookupStatus.FOUND)
+    missing_artist = LastFmArtistLookupResult("Missing", LastFmLookupStatus.NOT_FOUND)
+
+    assert empty_album.status is LastFmLookupStatus.FOUND
+    assert empty_album.tags == ()
+    assert missing_artist.candidate is None
 
 
 def test_existing_genre_evidence_preserves_normalized_matches_and_consistency() -> None:
