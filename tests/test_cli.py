@@ -63,6 +63,23 @@ def prepare_inbox(tmp_path: Path) -> tuple[Path, Path]:
     return inbox, taxonomy_path
 
 
+def save_overrides(path: Path) -> None:
+    path.write_text(
+        """
+[[overrides]]
+match_type = "artist_album"
+artist = "Album Artist"
+album = "Album Title"
+taxonomy_node_id = "black-metal"
+notes = "Personally verified."
+
+[overrides.metadata_corrections]
+genre = "Black Metal"
+""",
+        encoding="utf-8",
+    )
+
+
 def test_inspect_command_reads_real_id3_tags_and_maps_existing_genre(tmp_path, capsys) -> None:
     inbox, taxonomy_path = prepare_inbox(tmp_path)
 
@@ -92,6 +109,58 @@ def test_inspect_requires_review_when_only_top_level_local_genre_matches(tmp_pat
     assert "Proposed node: Metal [metal]" in output
     assert "Decision: review required" in output
     assert "broad top-level category" in output
+
+
+def test_inspect_manual_override_supersedes_local_classification(tmp_path, capsys) -> None:
+    inbox, taxonomy_path = prepare_inbox(tmp_path)
+    override_path = tmp_path / "overrides.toml"
+    save_overrides(override_path)
+
+    exit_code = cli.main(
+        [
+            "inspect",
+            "--inbox",
+            str(inbox),
+            "--taxonomy",
+            str(taxonomy_path),
+            "--override",
+            str(override_path),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Proposed node: Black Metal [black-metal]" in output
+    assert "Destination folder: Metal/Black Metal" in output
+    assert "Decision: manual override" in output
+    assert "Reason: matched artist_album override" in output
+    assert "Notes: Personally verified." in output
+    assert "genre: Black Metal" in output
+
+
+def test_inspect_manual_override_avoids_lastfm_request(tmp_path, monkeypatch, capsys) -> None:
+    inbox, taxonomy_path = prepare_inbox(tmp_path)
+    override_path = tmp_path / "overrides.toml"
+    save_overrides(override_path)
+    monkeypatch.delenv("LASTFM_API_KEY", raising=False)
+
+    exit_code = cli.main(
+        [
+            "inspect",
+            "--inbox",
+            str(inbox),
+            "--taxonomy",
+            str(taxonomy_path),
+            "--override",
+            str(override_path),
+            "--lastfm",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Decision: manual override" in output
+    assert "Last.fm" not in output
 
 
 def test_inspect_lastfm_requires_api_key(tmp_path, monkeypatch) -> None:

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from mp3_labeler.config.taxonomy_loader import TaxonomyLoader
-from mp3_labeler.domain.models import AlbumMetadata, LastFmTag
+from mp3_labeler.domain.models import AlbumMetadata, LastFmTag, ManualOverride
 from mp3_labeler.domain.scoring import ClassificationResult
 from mp3_labeler.domain.taxonomy import Taxonomy
 from mp3_labeler.infrastructure.db import open_connection
@@ -16,6 +16,7 @@ from mp3_labeler.infrastructure.repositories import LastFmCacheRepository
 from mp3_labeler.services.album_metadata_builder import AlbumMetadataBuilder
 from mp3_labeler.services.classifier import AlbumClassifier
 from mp3_labeler.services.lastfm_lookup import InsufficientMetadataError, LastFmLookup
+from mp3_labeler.services.override_service import OverrideService
 from mp3_labeler.services.scanner import InboxScanner
 
 
@@ -64,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Bypass cached Last.fm responses and replace them with fresh lookups.",
     )
+    inspect_parser.add_argument(
+        "--override",
+        type=Path,
+        help="Optional TOML file containing manual classification overrides.",
+    )
 
     subparsers.add_parser("review", help="Review albums that could not be classified safely.")
     return parser
@@ -90,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
             use_lastfm=args.lastfm,
             cache_db=args.cache_db,
             refresh_lastfm=args.refresh_lastfm,
+            override_path=args.override,
         )
 
     if args.command == "review":
@@ -107,13 +114,15 @@ def inspect_inbox(
     use_lastfm: bool = False,
     cache_db: Path = Path(".mp3-labeler-cache.sqlite3"),
     refresh_lastfm: bool = False,
+    override_path: Path | None = None,
 ) -> int:
     taxonomy = TaxonomyLoader().load(taxonomy_path)
+    override_service = OverrideService.load(override_path, taxonomy) if override_path is not None else None
     albums = InboxScanner().scan(inbox)
     reader = MetadataReader()
     builder = AlbumMetadataBuilder()
     classifier = AlbumClassifier()
-    lookup = _build_lastfm_lookup(cache_db) if use_lastfm else None
+    lookup: LastFmLookup | None = None
 
     print(f"Inbox: {inbox}")
     print(f"Albums found: {len(albums)}")
@@ -135,6 +144,13 @@ def inspect_inbox(
         print(f"Matched taxonomy nodes: {', '.join(evidence.matched_taxonomy_node_ids) or '(none)'}")
         print(f"Genre consistency: {evidence.consistency_ratio:.2f}")
 
+        override = override_service.find_override(metadata) if override_service is not None else None
+        if override is not None:
+            _print_override(override, taxonomy)
+            continue
+
+        if use_lastfm and lookup is None:
+            lookup = _build_lastfm_lookup(cache_db)
         lastfm_tags = _get_lastfm_evidence(lookup, metadata, refresh=refresh_lastfm) if lookup is not None else ()
         classification = classifier.classify(metadata, lastfm_tags, taxonomy, evidence)
         _print_classification(classification, taxonomy)
@@ -207,6 +223,21 @@ def _print_classification(result: ClassificationResult, taxonomy: Taxonomy) -> N
                 f"    {alternative_node.name} [{alternative_node.id}]: "
                 f"score={alternative.score:.2f}, confidence={alternative.confidence:.2f}"
             )
+
+
+def _print_override(override: ManualOverride, taxonomy: Taxonomy) -> None:
+    node = taxonomy.by_id()[override.taxonomy_node_id]
+    print("Classification:")
+    print(f"  Proposed node: {node.name} [{node.id}]")
+    print(f"  Destination folder: {node.folder_path}")
+    print("  Decision: manual override")
+    print(f"  Reason: matched {override.match_type} override")
+    if override.notes:
+        print(f"  Notes: {override.notes}")
+    if override.metadata_corrections:
+        print("  Metadata corrections:")
+        for field, value in override.metadata_corrections.items():
+            print(f"    {field}: {value}")
 
 
 if __name__ == "__main__":
