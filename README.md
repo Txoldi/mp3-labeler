@@ -25,7 +25,7 @@ mp3-labeler inspect --inbox ./inbox --taxonomy ./config/taxonomy.example.toml
 mp3-labeler review
 ```
 
-`inspect` is read-only: it scans MP3 files, reads their tags, builds album-level metadata, and maps any existing genres to the configured taxonomy.
+`inspect` is read-only: it scans MP3 files, reads their tags, builds album-level metadata, maps existing genres to the configured taxonomy, and prints a classification proposal or review decision.
 
 To include Last.fm evidence during inspection, provide the API key through an environment variable rather than a command-line argument:
 

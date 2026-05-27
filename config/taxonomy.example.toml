@@ -72,3 +72,11 @@ required_tags = ["death metal"]
 negative_tags = ["deathcore"]
 auto_accept_threshold = 0.9
 
+[[nodes]]
+id = "hardcore"
+name = "Hardcore"
+folder_path = "Hardcore"
+positive_tags = ["hardcore"]
+broad_tags = ["hardcore", "hardcore metal", "metallic hardcore", "hardcore punk"]
+negative_tags = ["punk", "punk rock", "melodic hardcore", "metalcore", "deathcore"]
+auto_accept_threshold = 0.85

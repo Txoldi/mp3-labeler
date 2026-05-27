@@ -6,12 +6,15 @@ import sys
 from pathlib import Path
 
 from mp3_labeler.config.taxonomy_loader import TaxonomyLoader
-from mp3_labeler.domain.models import AlbumMetadata
+from mp3_labeler.domain.models import AlbumMetadata, LastFmTag
+from mp3_labeler.domain.scoring import ClassificationResult
+from mp3_labeler.domain.taxonomy import Taxonomy
 from mp3_labeler.infrastructure.db import open_connection
 from mp3_labeler.infrastructure.lastfm_client import LastFmClient, LastFmClientError
 from mp3_labeler.infrastructure.metadata_reader import MetadataReader
 from mp3_labeler.infrastructure.repositories import LastFmCacheRepository
 from mp3_labeler.services.album_metadata_builder import AlbumMetadataBuilder
+from mp3_labeler.services.classifier import AlbumClassifier
 from mp3_labeler.services.lastfm_lookup import InsufficientMetadataError, LastFmLookup
 from mp3_labeler.services.scanner import InboxScanner
 
@@ -109,6 +112,7 @@ def inspect_inbox(
     albums = InboxScanner().scan(inbox)
     reader = MetadataReader()
     builder = AlbumMetadataBuilder()
+    classifier = AlbumClassifier()
     lookup = _build_lastfm_lookup(cache_db) if use_lastfm else None
 
     print(f"Inbox: {inbox}")
@@ -131,8 +135,9 @@ def inspect_inbox(
         print(f"Matched taxonomy nodes: {', '.join(evidence.matched_taxonomy_node_ids) or '(none)'}")
         print(f"Genre consistency: {evidence.consistency_ratio:.2f}")
 
-        if lookup is not None:
-            _print_lastfm_evidence(lookup, metadata, refresh=refresh_lastfm)
+        lastfm_tags = _get_lastfm_evidence(lookup, metadata, refresh=refresh_lastfm) if lookup is not None else ()
+        classification = classifier.classify(metadata, lastfm_tags, taxonomy, evidence)
+        _print_classification(classification, taxonomy)
 
     return 0
 
@@ -147,23 +152,61 @@ def _build_lastfm_lookup(cache_db: Path) -> LastFmLookup:
     return LastFmLookup(LastFmClient(api_key=api_key, api_secret=api_secret), cache=cache)
 
 
-def _print_lastfm_evidence(lookup: LastFmLookup, metadata: AlbumMetadata, *, refresh: bool = False) -> None:
+def _get_lastfm_evidence(
+    lookup: LastFmLookup, metadata: AlbumMetadata, *, refresh: bool = False
+) -> tuple[LastFmTag, ...]:
     try:
         tags = lookup.get_tags(metadata, refresh=refresh)
     except InsufficientMetadataError as error:
         print(f"Last.fm: skipped ({error})")
-        return
+        return ()
     except LastFmClientError as error:
         print(f"Last.fm: failed ({error})", file=sys.stderr)
-        return
+        return ()
 
     if not tags:
         print("Last.fm tags: (none)")
-        return
+        return ()
 
     print("Last.fm tags:")
     for tag in tags:
         print(f"  {tag.source}: {tag.name} ({tag.weight:g})")
+    return tags
+
+
+def _print_classification(result: ClassificationResult, taxonomy: Taxonomy) -> None:
+    print("Classification:")
+    if result.winner is None:
+        print("  Proposed node: (none)")
+        print("  Decision: review required")
+        print(f"  Reason: {result.reason}")
+        return
+
+    node = taxonomy.by_id()[result.winner.taxonomy_node_id]
+    decision = "review required" if result.requires_review else "eligible for automatic processing"
+    print(f"  Proposed node: {node.name} [{node.id}]")
+    print(f"  Destination folder: {node.folder_path}")
+    print(f"  Score: {result.winner.score:.2f}")
+    print(f"  Confidence: {result.winner.confidence:.2f}")
+    print(f"  Decision: {decision}")
+    print(f"  Reason: {result.reason}")
+
+    if result.winner.evidence:
+        print("  Evidence:")
+        for evidence in result.winner.evidence:
+            print(f"    {evidence.source}: {evidence.description} ({evidence.weight:+.2f})")
+    if result.winner.conflicts:
+        print("  Conflicts:")
+        for conflict in result.winner.conflicts:
+            print(f"    {conflict}")
+    if result.alternatives:
+        print("  Alternatives:")
+        for alternative in result.alternatives[:3]:
+            alternative_node = taxonomy.by_id()[alternative.taxonomy_node_id]
+            print(
+                f"    {alternative_node.name} [{alternative_node.id}]: "
+                f"score={alternative.score:.2f}, confidence={alternative.confidence:.2f}"
+            )
 
 
 if __name__ == "__main__":
