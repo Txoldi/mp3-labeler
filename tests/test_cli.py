@@ -135,6 +135,33 @@ def test_scan_prints_automatic_proposal_without_writing_or_moving(tmp_path, caps
     assert genres(album / "01.mp3") == ("Death Metal",)
 
 
+def test_scan_can_write_console_output_to_log_file(tmp_path, capsys) -> None:
+    inbox, _album, taxonomy_path = prepare_inbox(tmp_path)
+    log_path = tmp_path / "scan.log"
+
+    assert cli.main(
+        [
+            "scan",
+            "--inbox",
+            str(inbox),
+            "--library",
+            str(tmp_path / "library"),
+            "--taxonomy",
+            str(taxonomy_path),
+            *isolated_override_args(tmp_path),
+            "--log",
+            str(log_path),
+        ]
+    ) == 0
+
+    output = capsys.readouterr().out
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "Log:" in output
+    assert "Mode: scan (read-only)" in output
+    assert "Mode: scan (read-only)" in log_text
+    assert "Proposed node: Death Metal [death-metal]" in log_text
+
+
 def test_scan_can_display_lastfm_evidence_without_creating_database(tmp_path, monkeypatch, capsys) -> None:
     inbox, _album, taxonomy_path = prepare_inbox(tmp_path)
     monkeypatch.setenv("LASTFM_API_KEY", "test-key")
@@ -209,6 +236,36 @@ def test_apply_prompts_for_automatic_proposal_writes_tags_moves_and_records_hist
     assert len(recorded) == 1
     assert recorded[0].taxonomy_node_id == "death-metal"
     assert recorded[0].decision_source == "confirmed_automatic"
+
+
+def test_apply_can_write_console_output_to_log_file(tmp_path, monkeypatch, capsys) -> None:
+    inbox, album, taxonomy_path = prepare_inbox(tmp_path)
+    log_path = tmp_path / "apply.log"
+    answers = iter(("", "n"))
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
+
+    assert cli.main(
+        [
+            "apply",
+            "--inbox",
+            str(inbox),
+            "--library",
+            str(tmp_path / "library"),
+            "--taxonomy",
+            str(taxonomy_path),
+            *isolated_override_args(tmp_path),
+            "--db",
+            str(tmp_path / "history.sqlite3"),
+            "--log",
+            str(log_path),
+        ]
+    ) == 0
+
+    output = capsys.readouterr().out
+    log_text = log_path.read_text(encoding="utf-8")
+    assert "Moved:" in output
+    assert "Mode: apply" in log_text
+    assert f"Moved: {album}" in log_text
 
 
 def test_apply_accept_automatic_tags_skips_classification_prompt_but_asks_about_permanent_rule(

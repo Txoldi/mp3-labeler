@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from sqlite3 import Connection
+from typing import Callable, TextIO
 
 from mp3_labeler.config.taxonomy_loader import TaxonomyLoader
 from mp3_labeler.domain.models import (
@@ -84,27 +87,35 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--refresh-lastfm requires --lastfm")
 
     if args.command == "scan":
-        return scan_inbox(
-            args.inbox,
-            args.library,
-            args.taxonomy,
-            override_path=args.override,
-            use_lastfm=args.lastfm,
-            refresh_lastfm=args.refresh_lastfm,
-            genre_depth=args.genre_depth,
+        return _run_with_optional_log(
+            args.log,
+            args.command,
+            lambda: scan_inbox(
+                args.inbox,
+                args.library,
+                args.taxonomy,
+                override_path=args.override,
+                use_lastfm=args.lastfm,
+                refresh_lastfm=args.refresh_lastfm,
+                genre_depth=args.genre_depth,
+            ),
         )
     if args.command == "apply":
-        return apply_inbox(
-            args.inbox,
-            args.library,
-            args.taxonomy,
-            override_path=args.override,
-            database_path=args.db,
-            use_lastfm=args.lastfm,
-            refresh_lastfm=args.refresh_lastfm,
-            genre_depth=args.genre_depth,
-            accept_automatic_tags=args.accept_automatic_tags,
-            save_overrides=args.save_overrides,
+        return _run_with_optional_log(
+            args.log,
+            args.command,
+            lambda: apply_inbox(
+                args.inbox,
+                args.library,
+                args.taxonomy,
+                override_path=args.override,
+                database_path=args.db,
+                use_lastfm=args.lastfm,
+                refresh_lastfm=args.refresh_lastfm,
+                genre_depth=args.genre_depth,
+                accept_automatic_tags=args.accept_automatic_tags,
+                save_overrides=args.save_overrides,
+            ),
         )
     parser.error(f"unknown command: {args.command}")
     return 2
@@ -436,6 +447,39 @@ def _resolve_taxonomy_node(value: str, taxonomy: Taxonomy) -> str | None:
     return matched_ids[0] if len(matched_ids) == 1 else None
 
 
+class _Tee:
+    def __init__(self, *streams: TextIO) -> None:
+        self.streams = streams
+
+    def write(self, value: str) -> int:
+        for stream in self.streams:
+            stream.write(value)
+        return len(value)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
+
+
+def _run_with_optional_log(log_path: Path | None, command: str, action: Callable[[], int]) -> int:
+    if log_path is None:
+        return action()
+
+    resolved_path = _resolve_log_path(log_path, command)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    with resolved_path.open("w", encoding="utf-8") as log_file:
+        with contextlib.redirect_stdout(_Tee(sys.stdout, log_file)):
+            print(f"Log: {resolved_path}")
+            return action()
+
+
+def _resolve_log_path(path: Path, command: str) -> Path:
+    if path.suffix:
+        return path
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return path / f"{command}-{timestamp}.log"
+
+
 def _add_pipeline_arguments(parser: argparse.ArgumentParser, *, include_database: bool) -> None:
     parser.add_argument("--inbox", required=True, type=Path, help="Folder containing incoming album folders.")
     parser.add_argument("--library", required=True, type=Path, help="Root folder for organized music.")
@@ -460,6 +504,13 @@ def _add_pipeline_arguments(parser: argparse.ArgumentParser, *, include_database
         )
     parser.add_argument("--lastfm", action="store_true", help="Fetch Last.fm evidence using LASTFM_API_KEY.")
     parser.add_argument("--refresh-lastfm", action="store_true", help="Bypass cached Last.fm evidence.")
+    parser.add_argument(
+        "--log",
+        nargs="?",
+        const=Path("logs"),
+        type=Path,
+        help="Write console output to a log file. If no path is provided, writes under ./logs/.",
+    )
     parser.add_argument(
         "--genre-depth",
         type=int,
