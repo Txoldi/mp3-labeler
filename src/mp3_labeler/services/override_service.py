@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,13 @@ class OverrideService:
                 if artist == self._normalize_text(override.artist):
                     return override
         return None
+
+    def with_override(self, override: ManualOverride) -> OverrideService:
+        identity = self._match_identity(override)
+        retained = tuple(
+            existing for existing in self.overrides if self._match_identity(existing) != identity
+        )
+        return OverrideService((*retained, override), self.taxonomy)
 
     def _validate_overrides(self, overrides: tuple[ManualOverride, ...]) -> tuple[ManualOverride, ...]:
         known_node_ids = set(self.taxonomy.by_id())
@@ -163,4 +171,45 @@ class OverrideService:
         return value.strip().casefold() if value is not None else None
 
 
-__all__ = ["OverrideService", "OverrideValidationError"]
+class OverrideFileStore:
+    def __init__(self, taxonomy: Taxonomy) -> None:
+        self.taxonomy = taxonomy
+
+    def save(self, path: Path, override: ManualOverride) -> None:
+        current = OverrideService.load(path, self.taxonomy) if path.exists() else OverrideService((), self.taxonomy)
+        updated = current.with_override(override)
+        contents = self._serialize(updated.overrides)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_name(f".{path.name}.tmp")
+        temporary_path.write_text(contents, encoding="utf-8")
+        temporary_path.replace(path)
+
+    @classmethod
+    def _serialize(cls, overrides: tuple[ManualOverride, ...]) -> str:
+        lines: list[str] = []
+        for override in overrides:
+            lines.extend(
+                (
+                    "[[overrides]]",
+                    f"match_type = {cls._string(override.match_type)}",
+                    f"taxonomy_node_id = {cls._string(override.taxonomy_node_id)}",
+                )
+            )
+            for field in ("artist", "album", "folder_hash", "notes"):
+                value = getattr(override, field)
+                if value is not None:
+                    lines.append(f"{field} = {cls._string(value)}")
+            if override.metadata_corrections:
+                lines.append("")
+                lines.append("[overrides.metadata_corrections]")
+                for field, value in sorted(override.metadata_corrections.items()):
+                    lines.append(f"{cls._string(field)} = {cls._string(value)}")
+            lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _string(value: str) -> str:
+        return json.dumps(value, ensure_ascii=True)
+
+
+__all__ = ["OverrideFileStore", "OverrideService", "OverrideValidationError"]

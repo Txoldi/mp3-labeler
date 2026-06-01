@@ -7,7 +7,7 @@ import pytest
 from mp3_labeler.domain.models import AlbumMetadata, ManualOverride
 from mp3_labeler.domain.taxonomy import Taxonomy, TaxonomyNode
 from mp3_labeler.config.taxonomy_loader import TaxonomyLoader
-from mp3_labeler.services.override_service import OverrideService, OverrideValidationError
+from mp3_labeler.services.override_service import OverrideFileStore, OverrideService, OverrideValidationError
 
 
 def taxonomy() -> Taxonomy:
@@ -115,13 +115,47 @@ def test_load_empty_configuration_has_no_matches(tmp_path) -> None:
     assert service.find_override(metadata()) is None
 
 
+def test_file_store_creates_and_updates_an_artist_album_override(tmp_path) -> None:
+    path = tmp_path / "overrides.toml"
+    store = OverrideFileStore(taxonomy())
+    store.save(
+        path,
+        ManualOverride(
+            match_type="artist_album",
+            artist="Artist",
+            album="Album",
+            taxonomy_node_id="metal",
+        ),
+    )
+    store.save(
+        path,
+        ManualOverride(
+            match_type="artist_album",
+            artist="Artist",
+            album="Album",
+            taxonomy_node_id="death-metal",
+            notes="Reviewed manually.",
+        ),
+    )
+
+    service = OverrideService.load(path, taxonomy())
+    assert len(service.overrides) == 1
+    assert service.overrides[0].taxonomy_node_id == "death-metal"
+    assert service.overrides[0].notes == "Reviewed manually."
+
+
 def test_load_accepts_example_overrides_configuration() -> None:
     project_root = Path(__file__).parent.parent
     configured_taxonomy = TaxonomyLoader().load(project_root / "config" / "taxonomy.example.toml")
 
     service = OverrideService.load(project_root / "config" / "overrides.example.toml", configured_taxonomy)
 
-    assert service.find_override(metadata(artist="Example Artist", album="Example Album")) is not None
+    assert service.overrides
+    configured_override = service.overrides[0]
+    assert (
+        service.find_override(metadata(artist=configured_override.artist, album=configured_override.album))
+        == configured_override
+    )
 
 
 @pytest.mark.parametrize(

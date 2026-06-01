@@ -1,55 +1,88 @@
 # mp3-labeler
 
-`mp3-labeler` is a Python 3.12 application for organizing album folders into a user-controlled genre and subgenre taxonomy.
+`mp3-labeler` organizes MP3 album folders into a user-controlled genre and subgenre taxonomy. It favors explicit human decisions whenever classification is uncertain.
 
-The first milestone is a CLI that scans an inbox folder, reads MP3 metadata, queries Last.fm, classifies albums conservatively, writes metadata only when requested, and moves albums into a library folder.
+## Commands
 
-The initial CLI uses Python's standard `argparse` module to keep runtime dependencies small.
+The CLI has two working modes:
 
-## Design priorities
+- `scan` analyzes the inbox and previews genre tags and destinations. It never modifies files or SQLite state.
+- `apply` runs the same analysis, confirms decisions where required, writes genre tags, moves album folders, and records successful actions in SQLite.
 
-- Accuracy over speed
-- No automatic action on ambiguous matches
-- Fully user-controlled taxonomy
-- Manual overrides
-- Dry-run first workflow
-- SQLite-backed cache and decision history
-- Testable service boundaries
-- Minimal dependencies
-
-## Planned CLI
-
-```powershell
-mp3-labeler scan --inbox ./inbox --library ./library --dry-run
-mp3-labeler inspect --inbox ./inbox --taxonomy ./config/taxonomy.example.toml
-mp3-labeler review
-```
-
-`inspect` is read-only: it scans MP3 files, reads their tags, builds album-level metadata, maps existing genres to the configured taxonomy, and prints a classification proposal or review decision.
-
-Pass a manual override file when a verified destination should take precedence over automated evidence:
-
-```powershell
-mp3-labeler inspect --inbox ./inbox --taxonomy ./config/taxonomy.example.toml --override ./config/overrides.example.toml
-```
-
-To include Last.fm evidence during inspection, provide the API key through an environment variable rather than a command-line argument:
+### Scan
 
 ```powershell
 $env:LASTFM_API_KEY = "your-api-key"
-mp3-labeler inspect --inbox ./inbox --taxonomy ./config/taxonomy.example.toml --lastfm
+
+mp3-labeler scan `
+  --inbox "C:\Users\gorka\Documents\TestInbox" `
+  --library "C:\Users\gorka\Music\Library" `
+  --taxonomy .\config\taxonomy.example.toml `
+  --override .\config\overrides.toml `
+  --lastfm `
+  --genre-depth 2
 ```
 
-The current read-only Last.fm queries use the API key. `LASTFM_API_SECRET` is accepted for later authenticated Last.fm operations, but is not needed for local inspection.
+For every album, `scan` prints the local metadata evidence, Last.fm evidence when requested, classification result, proposed MP3 genre values, and destination folder.
 
-Last.fm responses are cached in `.mp3-labeler-cache.sqlite3` by default. Successful lookups remain fresh for 30 days; not-found responses remain fresh for 7 days. Choose another file or force new requests when needed:
+### Apply
 
 ```powershell
-mp3-labeler inspect --inbox ./inbox --lastfm --cache-db ./data/lastfm.sqlite3
-mp3-labeler inspect --inbox ./inbox --lastfm --refresh-lastfm
+mp3-labeler apply `
+  --inbox "C:\Users\gorka\Documents\TestInbox" `
+  --library "C:\Users\gorka\Music\Library" `
+  --taxonomy .\config\taxonomy.example.toml `
+  --override .\config\overrides.toml `
+  --db .\data\mp3-labeler.sqlite3 `
+  --lastfm `
+  --genre-depth 2
 ```
 
-## Project layout
+For each album without an existing permanent override:
+
+- Press `Enter` to accept the proposed taxonomy node.
+- Type another configured node ID or genre name to correct it.
+- Type `s` to leave the album unchanged.
+- After acceptance, answer whether the classification should be saved to `overrides.toml` as a permanent rule.
+
+Existing permanent overrides are applied without another prompt.
+
+To automatically accept only classifications that pass the automatic confidence gates:
+
+```powershell
+mp3-labeler apply ... --accept-automatic-tags
+```
+
+Albums requiring review still prompt for a human decision. Without `--save-overrides`, the program still asks whether each newly applied classification should become a permanent TOML rule.
+
+To save all newly applied classifications as permanent override rules without that save prompt:
+
+```powershell
+mp3-labeler apply ... --save-overrides
+```
+
+The two flags may be combined for unattended handling of automatically safe classifications:
+
+```powershell
+mp3-labeler apply ... --accept-automatic-tags --save-overrides
+```
+
+## Apply Safety
+
+- Destinations are validated before genre tags are changed.
+- Existing destination album folders are blocked instead of merged or overwritten.
+- Tag writes are verified before moving the album.
+- If moving fails while the source album remains available, the original genre values are restored.
+- Successful applied decisions are recorded in SQLite.
+- Permanent TOML overrides always take precedence on future runs.
+
+`--genre-depth` writes the most-specific subgenre values from the approved taxonomy path. For example, selecting `Melodic Black Metal` with `--genre-depth 2` writes `Black Metal` and `Melodic Black Metal`.
+
+## Last.fm Keys
+
+Provide `LASTFM_API_KEY` through the environment rather than storing it in source-controlled files. `scan` uses Last.fm without writing cache state; `apply` caches Last.fm lookups in its SQLite database.
+
+## Project Layout
 
 ```text
 src/mp3_labeler/
@@ -58,6 +91,6 @@ src/mp3_labeler/
   domain/           data models and scoring types
   services/         application pipeline services
   infrastructure/   filesystem, SQLite, Last.fm, metadata adapters
-tests/              unit tests
-config/             example user-controlled taxonomy and overrides
+tests/              automated tests
+config/             user-controlled taxonomy and overrides
 ```

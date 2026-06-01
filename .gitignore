@@ -11,3 +11,5 @@ dist/
 *.sqlite3
 .env
 .vscode/launch.json
+config/overrides.toml
+config/taxonomy.toml

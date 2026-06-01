@@ -111,3 +111,15 @@ class Decision:
     destination_path: Path | None = None
     dry_run: bool = True
     created_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AppliedAlbumDecision:
+    source_path: Path
+    destination_path: Path
+    artist: str | None
+    album: str | None
+    taxonomy_node_id: str
+    genres_written: tuple[str, ...]
+    decision_source: str
+    applied_at: datetime
