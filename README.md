@@ -15,8 +15,8 @@ The CLI has two working modes:
 $env:LASTFM_API_KEY = "your-api-key"
 
 mp3-labeler scan `
-  --inbox "C:\Users\gorka\Documents\TestInbox" `
-  --library "C:\Users\gorka\Music\Library" `
+  --inbox "C:\Temp\Inbox" `
+  --library "D:\\Music\Library" `
   --taxonomy .\config\taxonomy.example.toml `
   --override .\config\overrides.toml `
   --lastfm `
@@ -29,8 +29,8 @@ For every album, `scan` prints the local metadata evidence, Last.fm evidence whe
 
 ```powershell
 mp3-labeler apply `
-  --inbox "C:\Users\gorka\Documents\TestInbox" `
-  --library "C:\Users\gorka\Music\Library" `
+  --inbox "C:\Temp\Inbox" `
+  --library "D:\Music\Library" `
   --taxonomy .\config\taxonomy.example.toml `
   --override .\config\overrides.toml `
   --db .\data\mp3-labeler.sqlite3 `
