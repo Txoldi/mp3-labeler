@@ -2,56 +2,18 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import os
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from sqlite3 import Connection
 from typing import Callable, TextIO
 
+from mp3_labeler.application import ApplyOptions, LabelerApplication, ScanOptions, AlbumAnalysis
 from mp3_labeler.config.taxonomy_loader import TaxonomyLoader
-from mp3_labeler.domain.models import (
-    AlbumFolder,
-    AlbumMetadata,
-    AppliedAlbumDecision,
-    ExistingGenreEvidence,
-    LastFmTag,
-    ManualOverride,
-)
+from mp3_labeler.domain.models import AppliedAlbumDecision, ManualOverride
 from mp3_labeler.domain.scoring import ClassificationResult
 from mp3_labeler.domain.taxonomy import Taxonomy
-from mp3_labeler.infrastructure.db import open_connection
-from mp3_labeler.infrastructure.lastfm_client import LastFmClient, LastFmClientError
-from mp3_labeler.infrastructure.metadata_reader import MetadataReader
-from mp3_labeler.infrastructure.repositories import DecisionRepository, LastFmCacheRepository
-from mp3_labeler.services.album_metadata_builder import AlbumMetadataBuilder
-from mp3_labeler.services.apply_preflight import ApplyPreflightValidator
-from mp3_labeler.services.classifier import AlbumClassifier
-from mp3_labeler.services.lastfm_lookup import InsufficientMetadataError, LastFmLookup
-from mp3_labeler.services.organizer import AlbumOrganizer, album_destination
-from mp3_labeler.services.override_service import OverrideFileStore, OverrideService
-from mp3_labeler.services.scanner import InboxScanner
-from mp3_labeler.services.tag_writer import TagWriter
-
-
-@dataclass(frozen=True, slots=True)
-class AlbumAnalysis:
-    folder: AlbumFolder
-    metadata: AlbumMetadata
-    existing_genre: ExistingGenreEvidence
-    lastfm_tags: tuple[LastFmTag, ...]
-    lastfm_note: str | None
-    classification: ClassificationResult | None
-    override: ManualOverride | None
-
-    @property
-    def proposed_node_id(self) -> str | None:
-        if self.override is not None:
-            return self.override.taxonomy_node_id
-        if self.classification is not None and self.classification.winner is not None:
-            return self.classification.winner.taxonomy_node_id
-        return None
+from mp3_labeler.infrastructure.lastfm_client import LastFmClient
+from mp3_labeler.services.organizer import album_destination
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -132,16 +94,21 @@ def scan_inbox(
     refresh_lastfm: bool = False,
     genre_depth: int = 1,
 ) -> int:
-    taxonomy = TaxonomyLoader().load(taxonomy_path)
-    overrides = _load_overrides(override_path, taxonomy)
-    lookup = _build_lastfm_lookup(cache=None) if use_lastfm else None
-    analyses = _analyze(inbox, taxonomy, overrides, lookup, refresh_lastfm=refresh_lastfm)
+    result = LabelerApplication(lastfm_client_factory=LastFmClient).scan(
+        ScanOptions(
+            inbox=inbox,
+            taxonomy_path=taxonomy_path,
+            override_path=override_path,
+            use_lastfm=use_lastfm,
+            refresh_lastfm=refresh_lastfm,
+        )
+    )
     print(f"Inbox: {inbox}")
     print(f"Library: {library}")
     print("Mode: scan (read-only)")
-    print(f"Albums found: {len(analyses)}")
-    for analysis in analyses:
-        _print_analysis(analysis, taxonomy, library, genre_depth)
+    print(f"Albums found: {len(result.analyses)}")
+    for analysis in result.analyses:
+        _print_analysis(analysis, result.taxonomy, library, genre_depth)
     return 0
 
 
@@ -158,47 +125,46 @@ def apply_inbox(
     accept_automatic_tags: bool = False,
     save_overrides: bool = False,
 ) -> int:
-    preflight = ApplyPreflightValidator()
     try:
-        preflight.validate_database_path(database_path)
+        context = LabelerApplication(lastfm_client_factory=LastFmClient).prepare_apply(
+            ApplyOptions(
+                inbox=inbox,
+                taxonomy_path=taxonomy_path,
+                override_path=override_path,
+                database_path=database_path,
+                use_lastfm=use_lastfm,
+                refresh_lastfm=refresh_lastfm,
+            )
+        )
     except (FileNotFoundError, IsADirectoryError, NotADirectoryError, PermissionError, OSError) as error:
         print(f"Apply preflight failed: {error}")
         return 1
-    taxonomy = TaxonomyLoader().load(taxonomy_path)
-    overrides = _load_overrides(override_path, taxonomy)
-    connection = open_connection(database_path)
-    lookup = _build_lastfm_lookup(cache=LastFmCacheRepository(connection)) if use_lastfm else None
-    analyses = _analyze(inbox, taxonomy, overrides, lookup, refresh_lastfm=refresh_lastfm)
-    organizer = AlbumOrganizer()
-    tag_writer = TagWriter()
-    history = DecisionRepository(connection)
-    override_store = OverrideFileStore(taxonomy)
     failures = 0
 
     print(f"Inbox: {inbox}")
     print(f"Library: {library}")
     print("Mode: apply")
-    print(f"Albums found: {len(analyses)}")
-    for analysis in analyses:
-        _print_analysis(analysis, taxonomy, library, genre_depth)
-        selection = _select_for_apply(analysis, taxonomy, accept_automatic_tags)
+    print(f"Albums found: {len(context.analyses)}")
+    for analysis in context.analyses:
+        _print_analysis(analysis, context.taxonomy, library, genre_depth)
+        selection = _select_for_apply(analysis, context.taxonomy, accept_automatic_tags)
         if selection is None:
             print("Action: skipped; files unchanged.")
             continue
         node_id, decision_source = selection
-        genres = _genre_values(node_id, taxonomy, genre_depth)
-        decision = organizer.decision_for_node(
+        genres = _genre_values(node_id, context.taxonomy, genre_depth)
+        decision = context.organizer.decision_for_node(
             analysis.folder,
             node_id,
-            taxonomy,
+            context.taxonomy,
             library,
             dry_run=False,
             reason=decision_source,
         )
         assert decision.destination_path is not None
         try:
-            organizer.validate(decision)
-            preflight.validate_decision(decision, write_tags=genre_depth > 0)
+            context.organizer.validate(decision)
+            context.preflight.validate_decision(decision, write_tags=genre_depth > 0)
         except (
             FileExistsError,
             FileNotFoundError,
@@ -217,21 +183,21 @@ def apply_inbox(
             decision_source,
             save_overrides=save_overrides,
         )
-        prior_genres = tag_writer.capture_genres(analysis.folder.audio_files)
+        prior_genres = context.tag_writer.capture_genres(analysis.folder.audio_files)
         tags_written = False
         try:
             if genre_depth > 0:
-                tag_writer.write_genres(analysis.folder.audio_files, genres)
+                context.tag_writer.write_genres(analysis.folder.audio_files, genres)
                 tags_written = True
-            organizer.apply(decision)
+            context.organizer.apply(decision)
         except Exception as error:
             if tags_written and analysis.folder.path.exists():
-                tag_writer.restore_genres(prior_genres)
+                context.tag_writer.restore_genres(prior_genres)
             failures += 1
             print(f"Action failed: {error}")
             continue
 
-        history.save_applied(
+        context.history.save_applied(
             AppliedAlbumDecision(
                 source_path=analysis.folder.path,
                 destination_path=decision.destination_path,
@@ -248,41 +214,11 @@ def apply_inbox(
             if override is None:
                 print("Permanent override not saved: album artist and album metadata are required.")
             else:
-                override_store.save(override_path, override)
+                context.override_store.save(override_path, override)
                 print(f"Permanent override saved: {override_path}")
         print(f"Applied tags: {', '.join(genres) if genre_depth > 0 else '(unchanged)'}")
         print(f"Moved: {analysis.folder.path} -> {decision.destination_path}")
     return 1 if failures else 0
-
-
-def _analyze(
-    inbox: Path,
-    taxonomy: Taxonomy,
-    overrides: OverrideService,
-    lookup: LastFmLookup | None,
-    *,
-    refresh_lastfm: bool,
-) -> tuple[AlbumAnalysis, ...]:
-    reader = MetadataReader()
-    builder = AlbumMetadataBuilder()
-    classifier = AlbumClassifier()
-    results: list[AlbumAnalysis] = []
-    for folder in InboxScanner().scan(inbox):
-        tracks = tuple(reader.read_track(path) for path in folder.audio_files)
-        built = builder.build(tracks, taxonomy)
-        metadata = built.album_metadata
-        override = overrides.find_override(metadata)
-        if override is not None:
-            results.append(AlbumAnalysis(folder, metadata, built.existing_genre_evidence, (), None, None, override))
-            continue
-        tags, lastfm_note = (
-            _get_lastfm_evidence(lookup, metadata, refresh=refresh_lastfm)
-            if lookup is not None
-            else ((), None)
-        )
-        classification = classifier.classify(metadata, tags, taxonomy, built.existing_genre_evidence)
-        results.append(AlbumAnalysis(folder, metadata, built.existing_genre_evidence, tags, lastfm_note, classification, None))
-    return tuple(results)
 
 
 def _print_analysis(analysis: AlbumAnalysis, taxonomy: Taxonomy, library: Path, genre_depth: int) -> None:
@@ -428,32 +364,6 @@ def _genre_values(node_id: str, taxonomy: Taxonomy, genre_depth: int) -> tuple[s
     lineage.reverse()
     selectable = lineage[1:] if len(lineage) > 1 else lineage
     return tuple(node.name for node in selectable[-genre_depth:])
-
-
-def _load_overrides(path: Path, taxonomy: Taxonomy) -> OverrideService:
-    return OverrideService.load(path, taxonomy) if path.exists() else OverrideService((), taxonomy)
-
-
-def _build_lastfm_lookup(cache: LastFmCacheRepository | None) -> LastFmLookup:
-    api_key = os.environ.get("LASTFM_API_KEY", "").strip()
-    if not api_key:
-        raise SystemExit("Set LASTFM_API_KEY before running with --lastfm.")
-    return LastFmLookup(
-        LastFmClient(api_key=api_key, api_secret=os.environ.get("LASTFM_API_SECRET")),
-        cache=cache,
-    )
-
-
-def _get_lastfm_evidence(
-    lookup: LastFmLookup, metadata: AlbumMetadata, *, refresh: bool = False
-) -> tuple[tuple[LastFmTag, ...], str | None]:
-    try:
-        tags = lookup.get_tags(metadata, refresh=refresh)
-    except InsufficientMetadataError as error:
-        return (), f"Last.fm: skipped ({error})"
-    except LastFmClientError as error:
-        return (), f"Last.fm: failed ({error})"
-    return tags, None if tags else "Last.fm tags: (none)"
 
 
 def _resolve_taxonomy_node(value: str, taxonomy: Taxonomy) -> str | None:
