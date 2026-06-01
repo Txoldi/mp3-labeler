@@ -26,6 +26,7 @@ from mp3_labeler.infrastructure.lastfm_client import LastFmClient, LastFmClientE
 from mp3_labeler.infrastructure.metadata_reader import MetadataReader
 from mp3_labeler.infrastructure.repositories import DecisionRepository, LastFmCacheRepository
 from mp3_labeler.services.album_metadata_builder import AlbumMetadataBuilder
+from mp3_labeler.services.apply_preflight import ApplyPreflightValidator
 from mp3_labeler.services.classifier import AlbumClassifier
 from mp3_labeler.services.lastfm_lookup import InsufficientMetadataError, LastFmLookup
 from mp3_labeler.services.organizer import AlbumOrganizer, album_destination
@@ -157,6 +158,12 @@ def apply_inbox(
     accept_automatic_tags: bool = False,
     save_overrides: bool = False,
 ) -> int:
+    preflight = ApplyPreflightValidator()
+    try:
+        preflight.validate_database_path(database_path)
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError, PermissionError, OSError) as error:
+        print(f"Apply preflight failed: {error}")
+        return 1
     taxonomy = TaxonomyLoader().load(taxonomy_path)
     overrides = _load_overrides(override_path, taxonomy)
     connection = open_connection(database_path)
@@ -191,7 +198,16 @@ def apply_inbox(
         assert decision.destination_path is not None
         try:
             organizer.validate(decision)
-        except (FileExistsError, FileNotFoundError, NotADirectoryError, ValueError) as error:
+            preflight.validate_decision(decision, write_tags=genre_depth > 0)
+        except (
+            FileExistsError,
+            FileNotFoundError,
+            IsADirectoryError,
+            NotADirectoryError,
+            PermissionError,
+            OSError,
+            ValueError,
+        ) as error:
             failures += 1
             print(f"Action blocked: {error}")
             continue
