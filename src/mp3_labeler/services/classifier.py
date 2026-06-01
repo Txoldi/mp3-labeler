@@ -19,6 +19,7 @@ class EvidenceWeights:
     artist_tag: float = 0.6
     track_tag: float = 0.4
     local_genre: float = 1.05
+    top_level_local_genre_multiplier: float = 0.1
     broad_tag_multiplier: float = 0.25
     negative_tag_penalty: float = 1.0
     supporting_required_tag_bonus: float = 0.2
@@ -52,8 +53,15 @@ class AlbumClassifier:
         if not ordered_scores:
             return ClassificationResult(None, (), True, "No taxonomy node matched the available evidence")
 
-        winner = ordered_scores[0]
-        alternatives = ordered_scores[1:]
+        winner = self._first_specific_score(ordered_scores, taxonomy)
+        if winner is None:
+            return ClassificationResult(
+                None,
+                ordered_scores,
+                True,
+                "Only broad top-level taxonomy evidence matched; a more specific classification is required",
+            )
+        alternatives = tuple(score for score in ordered_scores if score.taxonomy_node_id != winner.taxonomy_node_id)
         node = taxonomy.by_id()[winner.taxonomy_node_id]
 
         if metadata.confidence < self.settings.identity_confidence_threshold:
@@ -138,8 +146,11 @@ class AlbumClassifier:
         reliable_local_ids = self._reliable_local_ids(existing_genre)
         if node.id in reliable_local_ids and existing_genre is not None:
             contribution = self.weights.local_genre * existing_genre.consistency_ratio
+            if self._is_top_level_node(node):
+                contribution *= self.weights.top_level_local_genre_multiplier
             score += contribution
-            specific_score += contribution
+            if not self._is_top_level_node(node):
+                specific_score += contribution
             evidence.append(
                 ScoreEvidence(
                     source="existing_genre",
@@ -262,6 +273,19 @@ class AlbumClassifier:
         node = taxonomy.by_id()[score.taxonomy_node_id]
         depth = len(AlbumClassifier._lineage(node.id, taxonomy))
         return (score.score, score.confidence, node.priority, depth)
+
+    @staticmethod
+    def _first_specific_score(scores: tuple[TaxonomyScore, ...], taxonomy: Taxonomy) -> TaxonomyScore | None:
+        by_id = taxonomy.by_id()
+        for score in scores:
+            node = by_id[score.taxonomy_node_id]
+            if not AlbumClassifier._is_top_level_node(node):
+                return score
+        return None
+
+    @staticmethod
+    def _is_top_level_node(node: TaxonomyNode) -> bool:
+        return node.parent_id is None
 
 
 __all__ = ["AlbumClassifier", "EvidenceWeights"]

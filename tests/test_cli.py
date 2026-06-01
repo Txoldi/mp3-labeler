@@ -348,7 +348,9 @@ def test_apply_uses_existing_permanent_override_without_prompt(tmp_path, monkeyp
     ) == 0
 
     assert not album.exists()
-    assert genres(tmp_path / "library" / "Metal" / "Black Metal" / album.name / "01.mp3") == ("Black Metal",)
+    assert genres(tmp_path / "library" / "Metal" / "Black Metal" / "_Albums" / album.name / "01.mp3") == (
+        "Black Metal",
+    )
 
 
 def test_apply_blocks_existing_destination_before_writing_metadata(tmp_path, monkeypatch, capsys) -> None:

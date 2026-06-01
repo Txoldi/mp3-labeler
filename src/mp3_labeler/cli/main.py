@@ -25,7 +25,7 @@ from mp3_labeler.infrastructure.repositories import DecisionRepository, LastFmCa
 from mp3_labeler.services.album_metadata_builder import AlbumMetadataBuilder
 from mp3_labeler.services.classifier import AlbumClassifier
 from mp3_labeler.services.lastfm_lookup import InsufficientMetadataError, LastFmLookup
-from mp3_labeler.services.organizer import AlbumOrganizer
+from mp3_labeler.services.organizer import AlbumOrganizer, album_destination
 from mp3_labeler.services.override_service import OverrideFileStore, OverrideService
 from mp3_labeler.services.scanner import InboxScanner
 from mp3_labeler.services.tag_writer import TagWriter
@@ -287,7 +287,7 @@ def _print_analysis(analysis: AlbumAnalysis, taxonomy: Taxonomy, library: Path, 
         node = taxonomy.by_id()[node_id]
         genres = _genre_values(node_id, taxonomy, genre_depth)
         print(f"Proposed genre tags: {', '.join(genres) if genre_depth > 0 else '(unchanged)'}")
-        print(f"Proposed destination: {library / Path(node.folder_path) / analysis.folder.path.name}")
+        print(f"Proposed destination: {album_destination(analysis.folder, node.id, taxonomy, library)}")
 
 
 def _print_classification(result: ClassificationResult, taxonomy: Taxonomy) -> None:

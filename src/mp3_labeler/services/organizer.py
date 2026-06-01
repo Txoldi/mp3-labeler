@@ -7,6 +7,21 @@ from mp3_labeler.domain.taxonomy import Taxonomy
 from mp3_labeler.infrastructure.filesystem import FileSystem
 
 
+ALBUM_BUCKET_FOLDER = "_Albums"
+
+
+def album_destination(album_folder: AlbumFolder, taxonomy_node_id: str, taxonomy: Taxonomy, library: Path) -> Path:
+    node = taxonomy.by_id()[taxonomy_node_id]
+    folder_path = Path(node.folder_path)
+    if _node_has_children(taxonomy_node_id, taxonomy):
+        folder_path /= ALBUM_BUCKET_FOLDER
+    return library / folder_path / album_folder.path.name
+
+
+def _node_has_children(taxonomy_node_id: str, taxonomy: Taxonomy) -> bool:
+    return any(node.parent_id == taxonomy_node_id for node in taxonomy.nodes)
+
+
 class AlbumOrganizer:
     def __init__(self, filesystem: FileSystem | None = None) -> None:
         self.filesystem = filesystem or FileSystem()
@@ -40,7 +55,7 @@ class AlbumOrganizer:
         reason: str = "accepted taxonomy classification",
     ) -> Decision:
         node = taxonomy.by_id()[taxonomy_node_id]
-        destination = library / Path(node.folder_path) / album_folder.path.name
+        destination = album_destination(album_folder, taxonomy_node_id, taxonomy, library)
         return Decision(
             album_folder=album_folder,
             action=DecisionAction.MOVE,
@@ -66,4 +81,4 @@ class AlbumOrganizer:
         )
 
 
-__all__ = ["AlbumOrganizer"]
+__all__ = ["ALBUM_BUCKET_FOLDER", "AlbumOrganizer", "album_destination"]

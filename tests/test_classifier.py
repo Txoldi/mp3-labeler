@@ -98,9 +98,7 @@ def test_classify_does_not_accept_artist_tag_alone_as_automatic_evidence() -> No
 def test_classify_does_not_accept_broad_parent_tag_alone() -> None:
     result = AlbumClassifier().classify(metadata(), (LastFmTag("metal", 100, "album"),), taxonomy())
 
-    assert result.winner is not None
-    assert result.winner.taxonomy_node_id == "metal"
-    assert result.winner.confidence == 0.0
+    assert result.winner is None
     assert result.requires_review is True
     assert "top-level" in result.reason
 
@@ -108,11 +106,23 @@ def test_classify_does_not_accept_broad_parent_tag_alone() -> None:
 def test_classify_reviews_top_level_node_even_with_reliable_local_genre() -> None:
     result = AlbumClassifier().classify(metadata(), (), taxonomy(), existing_genre("metal"))
 
-    assert result.winner is not None
-    assert result.winner.taxonomy_node_id == "metal"
-    assert result.winner.confidence == 1.0
+    assert result.winner is None
     assert result.requires_review is True
     assert "top-level" in result.reason
+
+
+def test_classify_lets_specific_lastfm_tag_beat_broad_local_metal_genre() -> None:
+    result = AlbumClassifier().classify(
+        metadata(),
+        (LastFmTag("black metal", 44, "artist"),),
+        taxonomy(),
+        existing_genre("metal"),
+    )
+
+    assert result.winner is not None
+    assert result.winner.taxonomy_node_id == "black-metal"
+    assert result.requires_review is True
+    assert "below" in result.reason
 
 
 def test_classify_chooses_deeper_subgenre_when_required_parent_evidence_exists() -> None:
